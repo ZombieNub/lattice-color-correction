@@ -19,4 +19,5 @@ FetchContent_MakeAvailable(or-tools)
 
 add_executable(ilpfun src/main.cpp)
 
+target_include_directories(ilpfun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(ilpfun PRIVATE ortools::ortools)
