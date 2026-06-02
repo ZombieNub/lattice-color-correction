@@ -16,6 +16,7 @@ using std::unordered_map;
 struct Graph {
     set<int> nodes;
     unordered_map<EdgeInfo, int> edges;
+    set<EdgeInfo> marked_edges;
 
     void addNode(const int id) {
         nodes.insert(id);
@@ -26,17 +27,27 @@ struct Graph {
         edges.insert({info, weight});
     }
 
+    void markEdge(const int n1, const int n2) {
+        const EdgeInfo info(n1, n2);
+        marked_edges.insert(info);
+    }
+
     std::string toDot() const {
         std::ostringstream os;
-        os << "graph G {\n";
+        os << "graph G {\n  ";
         for (int node : nodes) {
-            os << "  " << node << ";\n";
+            os << node << "; ";
         }
+        os << "\n  ";
         for (auto edge : edges) {
-            os << "  " << edge.first.n1 << " -- " << edge.first.n2;
-            os << " [label=\"" << edge.second << "\"];\n";
+            os << edge.first.n1 << " -- " << edge.first.n2;
+            os << " [label=\"" << edge.second << "\"";
+            if (marked_edges.contains(edge.first)) {
+                os << " color=\"red\"";
+            }
+            os << "]; ";
         }
-        os << "}";
+        os << "\n}";
         return os.str();
     }
 
