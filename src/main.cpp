@@ -82,38 +82,28 @@ void shortest_path_example() {
 }
 
 template <int LATTICE_SIZE, typename RNG>
-std::array<int, (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1)> make_random_error(RNG& gen, double triangle_chance) {
+std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> make_random_error(RNG& gen, double triangle_chance) {
     std::uniform_real_distribution tri_dist(0.0, 1.0);
 
-    std::array<int, (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1)> result{};
-    // First we create a random triangle lattice with i.i.d. triangle placement
-    for (int i = 0; i < LATTICE_SIZE * LATTICE_SIZE * 2; i++) {
-        if (tri_dist(gen) < triangle_chance) {
-            int triangle_x = i % (LATTICE_SIZE * 2);
-            int triangle_y = i / (LATTICE_SIZE * 2);
-
-            if (triangle_x % 2 == 0) {
-                int top_left_position = (triangle_y * LATTICE_SIZE * 2) + (triangle_x / 2);
-                int bottom_position = ((triangle_y + 1) * LATTICE_SIZE * 2) + (triangle_x / 2);
-                int top_right_position = (triangle_y * LATTICE_SIZE * 2) + ((triangle_x / 2) + 1);
-
-                result[top_left_position] += 1;
-                result[bottom_position] += 1;
-                result[top_right_position] += 1;
-            } else {
-                int top_position = (triangle_y * LATTICE_SIZE * 2) + ((triangle_x / 2) + 1);
-                int bottom_left_position = ((triangle_y + 1) * LATTICE_SIZE * 2) + (triangle_x / 2);
-                int bottom_right_position = ((triangle_y + 1) * LATTICE_SIZE * 2) + ((triangle_x / 2) + 1);
-
-                result[top_position] += 1;
-                result[bottom_left_position] += 1;
-                result[bottom_right_position] += 1;
-            }
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> result{};
+    for (int x = 0; x < LATTICE_SIZE + 1; x++) {
+        for (int y = 0; y < LATTICE_SIZE + 1; y++) {
+            result[x][y] = 0;
         }
     }
 
-    for (int i = 0; i < (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1); i++) {
-        result[i] = result[i] % 2;
+    for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+        for (int y = 0; y < LATTICE_SIZE; y++) {
+            if (x % 2 == 0) {
+                result[x/2][y] ^= 1;
+                result[x/2][y+1] ^= 1;
+                result[x/2+1][y] ^= 1;
+            } else {
+                result[x/2+1][y] ^= 1;
+                result[x/2][y+1] ^= 1;
+                result[x/2+1][y+1] ^= 1;
+            }
+        }
     }
 
     return result;
@@ -125,95 +115,84 @@ int main() {
     std::mt19937 gen(35);
 
     constexpr int LATTICE_SIZE = 8;
-    std::array<int, (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1)> sample_error = {
-        0,0,0,0,0,1,1,0,1,
-         0,0,0,1,0,0,1,0,1,
-          0,1,0,1,1,1,1,0,1,
-           1,1,1,0,1,1,1,1,0,
-            1,1,0,0,0,0,1,0,0,
-             1,1,1,0,1,1,0,0,0,
-              0,0,0,1,1,1,0,1,0,
-               1,0,0,0,1,1,1,0,0,
-                0,0,1,0,1,1,0,0,0,
-    };
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = {{
+        {0, 0, 0, 1, 1, 0, 0, 0, 0},
+        {0, 0, 0, 0, 1, 0, 1, 1, 0},
+        {0, 0, 0, 0, 0, 0, 1, 0, 1},
+        {0, 1, 1, 1, 0, 0, 1, 1, 0},
+        {0, 1, 0, 0, 1, 0, 0, 0, 0},
+        {1, 0, 0, 0, 0, 1, 1, 0, 1},
+        {0, 0, 0, 0, 1, 1, 1, 0, 1},
+        {0, 1, 1, 1, 1, 0, 0, 0, 0},
+        {0, 0, 1, 0, 1, 0, 0, 0, 0},
+    }};
+    constexpr int REGION_SIZE = 2;
 
     CpModelBuilder cp_model;
-    std::array<BoolVar, LATTICE_SIZE * LATTICE_SIZE * 2> tri_vars{};
+    std::array<std::array<BoolVar, LATTICE_SIZE>, LATTICE_SIZE * 2> tri_vars{};
     LinearExpr total_toggles = 0;
-    for (int i = 0; i < LATTICE_SIZE * LATTICE_SIZE * 2; i++) {
-        tri_vars[i] = cp_model.NewBoolVar().WithName(std::format("tri-{}", i));
-        total_toggles += tri_vars[i];
+    for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+        for (int y = 0; y < LATTICE_SIZE; y++) {
+            tri_vars[x][y] = cp_model.NewBoolVar().WithName(std::format("tri-({},{})", x, y));
+            total_toggles += tri_vars[x][y];
+        }
     }
     operations_research::Domain errorDomain(0, 7);
-    std::array<IntVar, (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1)> error_counts{};
-    std::array<IntVar, (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1)> ks{};
+    std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> error_counts{};
+    std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1>  ks{};
     operations_research::Domain modDomain(0, 1);
-    std::array<IntVar, (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1)> mods{};
-    for (int i = 0; i < (LATTICE_SIZE + 1) * (LATTICE_SIZE + 1); i++) {
-        error_counts[i] = cp_model.NewIntVar(errorDomain).WithName(std::format("error-{}", i));
-        LinearExpr error = sample_error[i];
-        int point_x = i % (LATTICE_SIZE + 1);
-        int point_y = i / (LATTICE_SIZE + 1);
+    std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1>  mods{};
+    for (int x = 0; x < LATTICE_SIZE + 1; x++) {
+        for (int y = 0; y < LATTICE_SIZE + 1; y++) {
+            error_counts[x][y] = cp_model.NewIntVar(errorDomain).WithName(std::format("error-({},{})", x,y));
+            LinearExpr error = sample_error[y][x]; // Inverted so that inputting the errors from the decoder is 1:1 with how it appears
+            bool is_boundary_point = false;
 
-        int top_left_x = 2 * point_x - 1;
-        int top_left_y = point_y - 1;
-        if (top_left_x >= 0 && top_left_x < LATTICE_SIZE * 2 && top_left_y >= 0 && top_left_y < LATTICE_SIZE) {
-            error += tri_vars[(top_left_y * LATTICE_SIZE * 2) + top_left_x];
+            std::array<std::pair<int, int>, 6> neighbors = {{
+                {(2 * x) - 1, y - 1},
+                {(2 * x), y - 1},
+                {(2 * x) + 1, y - 1},
+                {(2 * x) - 2, y},
+                {(2 * x) - 1, y},
+                {(2 * x), y},
+            }};
+
+            for (std::pair<int, int> neighbor: neighbors) {
+                if (neighbor.first >= 0 && neighbor.first < LATTICE_SIZE * 2 && neighbor.second >= 0 && neighbor.second < LATTICE_SIZE) {
+                    error += tri_vars[neighbor.first][neighbor.second];
+
+                    int region_x = neighbor.first % ((REGION_SIZE + 1) * 2);
+                    int region_y = neighbor.second % (REGION_SIZE + 1);
+                    if (region_x == (REGION_SIZE * 2) || region_x == (REGION_SIZE * 2 + 1) || region_y == REGION_SIZE) {
+                        is_boundary_point = true;
+                    }
+                }
+            }
+
+            cp_model.AddEquality(error_counts[x][y], error);
+
+            ks[x][y] = cp_model.NewIntVar(errorDomain).WithName(std::format("k-({},{})", x, y));
+            mods[x][y] = cp_model.NewIntVar(modDomain).WithName(std::format("mod-({},{})", x, y));
+            cp_model.AddEquality(error_counts[x][y], (2 * ks[x][y]) + mods[x][y]);
+
+            if (!is_boundary_point) {
+                cp_model.AddEquality(mods[x][y], 0);
+            }
         }
-
-        int top_x = 2 * point_x;
-        int top_y = point_y - 1;
-        if (top_x >= 0 && top_x < LATTICE_SIZE * 2 && top_y >= 0 && top_y < LATTICE_SIZE) {
-            error += tri_vars[(top_y * LATTICE_SIZE * 2) + top_x];
-        }
-
-        int top_right_x = 2 * point_x + 1;
-        int top_right_y = point_y - 1;
-        if (top_right_x >= 0 && top_right_x < LATTICE_SIZE * 2 && top_right_y >= 0 && top_right_y < LATTICE_SIZE) {
-            error += tri_vars[(top_right_y * LATTICE_SIZE * 2) + top_right_x];
-        }
-
-        int bottom_left_x = 2 * point_x - 2;
-        int bottom_left_y = point_y;
-        if (bottom_left_x >= 0 && bottom_left_x < LATTICE_SIZE * 2 && bottom_left_y >= 0 && bottom_left_y < LATTICE_SIZE) {
-            error += tri_vars[(bottom_left_y * LATTICE_SIZE * 2) + bottom_left_x];
-        }
-
-        int bottom_x = 2 * point_x - 1;
-        int bottom_y = point_y;
-        if (bottom_x >= 0 && bottom_x < LATTICE_SIZE * 2 && bottom_y >= 0 && bottom_y < LATTICE_SIZE) {
-            error += tri_vars[(bottom_y * LATTICE_SIZE * 2) + bottom_x];
-        }
-
-        int bottom_right_x = 2 * point_x;
-        int bottom_right_y = point_y;
-        if (bottom_right_x >= 0 && bottom_right_x < LATTICE_SIZE * 2 && bottom_right_y >= 0 && bottom_right_y < LATTICE_SIZE) {
-            error += tri_vars[(bottom_right_y * LATTICE_SIZE * 2) + bottom_right_x];
-        }
-
-        cp_model.AddEquality(error_counts[i], error);
-
-        ks[i] = cp_model.NewIntVar(errorDomain).WithName(std::format("k-{}", i));
-        mods[i] = cp_model.NewIntVar(modDomain).WithName(std::format("mod-{}", i));
-        cp_model.AddEquality(error_counts[i], (2 * ks[i]) + mods[i]);
-
-        cp_model.AddEquality(mods[i], 0);
     }
 
     cp_model.Minimize(total_toggles);
 
-    print_model(cp_model);
-
     const CpSolverResponse response = Solve(cp_model.Build());
 
     if (response.status() == OPTIMAL) {
-        for (int i = 0; i < LATTICE_SIZE * LATTICE_SIZE * 2; i++) {
-            std::cout << SolutionIntegerValue(response, tri_vars[i]) << " ";
-            if ((i + 1) % (LATTICE_SIZE * 2) == 0) {
-                std::cout << "\n";
-                for (int j = 0; j < (i + 1) / (LATTICE_SIZE * 2); j++) {
-                    std::cout << " ";
-                }
+        for (int y = 0; y < LATTICE_SIZE; y++) {
+            for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+                std::cout << SolutionIntegerValue(response, tri_vars[x][y]) << " ";
+            }
+            std::cout << "\n";
+            for (int j = 0; j < y+1; j++) {
+                std::cout << " ";
             }
         }
         std::cout << std::endl;
