@@ -109,95 +109,109 @@ std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> make_random_erro
     return result;
 }
 
+template<int LATTICE_SIZE>
+std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_lattice(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const int REGION_SIZE) {
+    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles{};
+    for (int y = 0; y < LATTICE_SIZE; y++) {
+        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+            triangle_toggles[y][x] = 0;
+        }
+    }
+
+    int region_increment = REGION_SIZE + 1;
+
+    for (int region_x = 0; region_x < LATTICE_SIZE * 2; region_x += region_increment * 2) {
+        for (int region_y = 0; region_y < LATTICE_SIZE; region_y += region_increment) {
+            CpModelBuilder cp_model;
+            std::array<std::array<BoolVar, LATTICE_SIZE>, LATTICE_SIZE * 2> tri_vars{};
+            LinearExpr total_toggles = 0;
+            for (int x = region_x; x < LATTICE_SIZE * 2 && x <= region_x + (REGION_SIZE * 2); x++) {
+                for (int y = region_y; y < LATTICE_SIZE && y <= region_y + REGION_SIZE; y++) {
+                    tri_vars[x][y] = cp_model.NewBoolVar().WithName(std::format("tri-({},{})", x, y));
+                    total_toggles += tri_vars[x][y];
+                }
+            }
+            operations_research::Domain errorDomain(0, 7);
+            std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> error_counts{};
+            std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1>  ks{};
+            operations_research::Domain modDomain(0, 1);
+            std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1>  mods{};
+            for (int x = region_x / 2; x < LATTICE_SIZE + 1 && x <= region_x + REGION_SIZE; x++) {
+                for (int y = region_y; y < LATTICE_SIZE + 1 && y <= region_y + REGION_SIZE; y++) {
+                    LinearExpr error = sample_error[y][x]; // Inverted so that inputting the errors from the decoder is 1:1 with how it appears
+                    bool is_boundary_point = x == (region_x / 2) || x == (region_x / 2) + REGION_SIZE || y == region_y || y == region_y + REGION_SIZE;
+
+                    std::array<std::pair<int, int>, 6> neighbors = {{
+                        {(2 * x) - 1, y - 1},
+                        {(2 * x), y - 1},
+                        {(2 * x) + 1, y - 1},
+                        {(2 * x) - 2, y},
+                        {(2 * x) - 1, y},
+                        {(2 * x), y},
+                    }};
+
+                    for (std::pair<int, int> neighbor: neighbors) {
+                        if (neighbor.first >= 0 && neighbor.first < LATTICE_SIZE * 2 && neighbor.second >= 0 && neighbor.second < LATTICE_SIZE) {
+                            error += tri_vars[neighbor.first][neighbor.second];
+                        }
+                    }
+
+                    if (!is_boundary_point) {
+                        error_counts[x][y] = cp_model.NewIntVar(errorDomain).WithName(std::format("error-({},{})", x,y));
+                        cp_model.AddEquality(error_counts[x][y], error);
+
+                        ks[x][y] = cp_model.NewIntVar(errorDomain).WithName(std::format("k-({},{})", x, y));
+                        mods[x][y] = cp_model.NewIntVar(modDomain).WithName(std::format("mod-({},{})", x, y));
+                        cp_model.AddEquality(error_counts[x][y], (2 * ks[x][y]) + mods[x][y]);
+
+                        cp_model.AddEquality(mods[x][y], 0);
+                    }
+                }
+            }
+
+            cp_model.Minimize(total_toggles);
+
+            const CpSolverResponse response = Solve(cp_model.Build());
+
+            for (int x = region_x; x < LATTICE_SIZE * 2 && x <= region_x + (REGION_SIZE * 2); x++) {
+                for (int y = region_y; y < LATTICE_SIZE && y <= region_y + REGION_SIZE; y++) {
+                    triangle_toggles[y][x] = SolutionIntegerValue(response, tri_vars[x][y]);
+                }
+            }
+        }
+    }
+
+    return triangle_toggles;
+}
+
 int main() {
     absl::InitializeLog();
     absl::SetStderrThreshold(absl::LogSeverity::kInfo);
     std::mt19937 gen(35);
 
-    constexpr int LATTICE_SIZE = 8;
+    constexpr int LATTICE_SIZE = 7;
     std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = {{
-        {0, 0, 0, 1, 1, 0, 0, 0, 0},
-        {0, 0, 0, 0, 1, 0, 1, 1, 0},
-        {0, 0, 0, 0, 0, 0, 1, 0, 1},
-        {0, 1, 1, 1, 0, 0, 1, 1, 0},
-        {0, 1, 0, 0, 1, 0, 0, 0, 0},
-        {1, 0, 0, 0, 0, 1, 1, 0, 1},
-        {0, 0, 0, 0, 1, 1, 1, 0, 1},
-        {0, 1, 1, 1, 1, 0, 0, 0, 0},
-        {0, 0, 1, 0, 1, 0, 0, 0, 0},
+        {1, 1, 0, 0, 0, 0, 0, 0},
+        {1, 0, 0, 1, 0, 0, 0, 1},
+        {0, 1, 1, 1, 0, 0, 1, 1},
+        {1, 1, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 1, 0, 1, 1},
+        {0, 0, 1, 0, 0, 0, 1, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0},
     }};
-    constexpr int REGION_SIZE = 2;
+    constexpr int REGION_SIZE = 3;
 
-    CpModelBuilder cp_model;
-    std::array<std::array<BoolVar, LATTICE_SIZE>, LATTICE_SIZE * 2> tri_vars{};
-    LinearExpr total_toggles = 0;
-    for (int x = 0; x < LATTICE_SIZE * 2; x++) {
-        for (int y = 0; y < LATTICE_SIZE; y++) {
-            tri_vars[x][y] = cp_model.NewBoolVar().WithName(std::format("tri-({},{})", x, y));
-            total_toggles += tri_vars[x][y];
+    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles = solve_lattice<LATTICE_SIZE>(sample_error, REGION_SIZE);
+
+    for (int y = 0; y < LATTICE_SIZE; y++) {
+        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+            std::cout << triangle_toggles[y][x] << " ";
         }
-    }
-    operations_research::Domain errorDomain(0, 7);
-    std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> error_counts{};
-    std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1>  ks{};
-    operations_research::Domain modDomain(0, 1);
-    std::array<std::array<IntVar, LATTICE_SIZE + 1>, LATTICE_SIZE + 1>  mods{};
-    for (int x = 0; x < LATTICE_SIZE + 1; x++) {
-        for (int y = 0; y < LATTICE_SIZE + 1; y++) {
-            error_counts[x][y] = cp_model.NewIntVar(errorDomain).WithName(std::format("error-({},{})", x,y));
-            LinearExpr error = sample_error[y][x]; // Inverted so that inputting the errors from the decoder is 1:1 with how it appears
-            bool is_boundary_point = false;
-
-            std::array<std::pair<int, int>, 6> neighbors = {{
-                {(2 * x) - 1, y - 1},
-                {(2 * x), y - 1},
-                {(2 * x) + 1, y - 1},
-                {(2 * x) - 2, y},
-                {(2 * x) - 1, y},
-                {(2 * x), y},
-            }};
-
-            for (std::pair<int, int> neighbor: neighbors) {
-                if (neighbor.first >= 0 && neighbor.first < LATTICE_SIZE * 2 && neighbor.second >= 0 && neighbor.second < LATTICE_SIZE) {
-                    error += tri_vars[neighbor.first][neighbor.second];
-
-                    int region_x = neighbor.first % ((REGION_SIZE + 1) * 2);
-                    int region_y = neighbor.second % (REGION_SIZE + 1);
-                    if (region_x == (REGION_SIZE * 2) || region_x == (REGION_SIZE * 2 + 1) || region_y == REGION_SIZE) {
-                        is_boundary_point = true;
-                    }
-                }
-            }
-
-            cp_model.AddEquality(error_counts[x][y], error);
-
-            ks[x][y] = cp_model.NewIntVar(errorDomain).WithName(std::format("k-({},{})", x, y));
-            mods[x][y] = cp_model.NewIntVar(modDomain).WithName(std::format("mod-({},{})", x, y));
-            cp_model.AddEquality(error_counts[x][y], (2 * ks[x][y]) + mods[x][y]);
-
-            if (!is_boundary_point) {
-                cp_model.AddEquality(mods[x][y], 0);
-            }
+        std::cout << "\n";
+        for (int j = 0; j < y+1; j++) {
+            std::cout << " ";
         }
-    }
-
-    cp_model.Minimize(total_toggles);
-
-    const CpSolverResponse response = Solve(cp_model.Build());
-
-    if (response.status() == OPTIMAL) {
-        for (int y = 0; y < LATTICE_SIZE; y++) {
-            for (int x = 0; x < LATTICE_SIZE * 2; x++) {
-                std::cout << SolutionIntegerValue(response, tri_vars[x][y]) << " ";
-            }
-            std::cout << "\n";
-            for (int j = 0; j < y+1; j++) {
-                std::cout << " ";
-            }
-        }
-        std::cout << std::endl;
-        std::cout << "Optimal solution found." << std::endl;
-        std::cout << "Cost: " << response.objective_value() << std::endl;
     }
 
     return 0;
