@@ -210,7 +210,7 @@ std::pair<std::vector<int_pair>, int> process_spanning_tree(std::array<std::arra
     int current_error = sample_error[spanning_tree->root.second][spanning_tree->root.first];
     std::vector<int_pair> flips{};
     for (std::pair<const int_pair, tuple<std::shared_ptr<lattice_spanning_tree>, int_pair, int_pair> > child: spanning_tree->children) {
-        int_pair target = child.first;
+        //int_pair target = child.first;
         std::shared_ptr<lattice_spanning_tree> next_tree = std::get<0>(child.second);
         int_pair tri1 = std::get<1>(child.second);
         int_pair tri2 = std::get<2>(child.second);
@@ -434,102 +434,54 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
     return triangle_toggles;
 }
 
+template <int LATTICE_SIZE>
+std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> test_sample(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const int REGION_SIZE) {
+    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles = solve_lattice<LATTICE_SIZE>(sample_error, REGION_SIZE, false);
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> residual_error = apply_triangles<LATTICE_SIZE>(sample_error, triangle_toggles);
+    if (REGION_SIZE > LATTICE_SIZE) {
+        std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles_2 = solve_residual_error<LATTICE_SIZE>(residual_error, REGION_SIZE);
+        std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> remaining_error = apply_triangles<LATTICE_SIZE>(residual_error, triangle_toggles_2);
+        for (int y = 0; y < LATTICE_SIZE; y++) {
+            for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+                triangle_toggles[y][x] = triangle_toggles[y][x] ^ triangle_toggles_2[y][x];
+            }
+        }
+    }
+    return triangle_toggles;
+}
+
+template <auto Start, auto End, auto Inc, class F>
+constexpr void constexpr_for(F&& f)
+{
+    if constexpr (Start < End)
+    {
+        f(std::integral_constant<decltype(Start), Start>());
+        constexpr_for<Start + Inc, End, Inc>(f);
+    }
+}
+
 int main() {
     absl::InitializeLog();
     absl::SetStderrThreshold(absl::LogSeverity::kInfo);
     std::mt19937 gen(52);
+    std::freopen("performance.csv", "w", stdout);
 
-    constexpr int LATTICE_SIZE = 7;
-    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = {{
-        {0, 0, 0, 0, 0, 1, 1, 0},
-        {0, 0, 0, 0, 0, 1, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 1, 0, 0, 0, 1, 0},
-        {0, 1, 1, 0, 0, 1, 1, 0},
-        {0, 1, 1, 0, 0, 0, 0, 0},
-        {0, 1, 0, 0, 0, 0, 0, 0},
-    }};
-    //std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = make_random_error<LATTICE_SIZE>(gen, 0.1);
-    constexpr int REGION_SIZE = 1;
+    std::cout << "REGION_SIZE,LATTICE_SIZE,p/100,Elapsed Time (ms)" << "\n";
 
-    for (int y = 0; y < LATTICE_SIZE + 1; y++) {
-        for (int x = 0; x < LATTICE_SIZE + 1; x++) {
-            std::cout << sample_error[y][x] << " ";
-        }
-        std::cout << "\n";
-        for (int j = 0; j < y+1; j++) {
-            std::cout << " ";
+    template for (constexpr int REGION_SIZE : std::views::iota(2, 6)) {
+        template for (constexpr int LATTICE_SIZE : std::views::iota(REGION_SIZE, 101)) {
+            for (int p = 0; p <= 100; p += 10) {
+                double np = static_cast<double>(p) / static_cast<double>(100);
+                auto sample_error = make_random_error<LATTICE_SIZE>(gen, np);
+                auto start = std::chrono::steady_clock::now();
+                auto result = test_sample<LATTICE_SIZE>(sample_error, REGION_SIZE);
+                auto end = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+                std::cout << REGION_SIZE << ",";
+                std::cout << LATTICE_SIZE << ",";
+                std::cout << p << ",";
+                std::cout << elapsed.count() << "\n";
+            }
         }
     }
-
-    std::cout << std::endl;
-
-    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles = solve_lattice<LATTICE_SIZE>(sample_error, REGION_SIZE, false);
-
-    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> residual_error = apply_triangles<LATTICE_SIZE>(sample_error, triangle_toggles);
-
-    for (int y = 0; y < LATTICE_SIZE; y++) {
-        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
-            std::cout << triangle_toggles[y][x] << " ";
-        }
-        std::cout << "\n";
-        for (int j = 0; j < y+1; j++) {
-            std::cout << " ";
-        }
-    }
-
-    std::cout << std::endl;
-
-    for (int y = 0; y < LATTICE_SIZE + 1; y++) {
-        for (int x = 0; x < LATTICE_SIZE + 1; x++) {
-            std::cout << residual_error[y][x] << " ";
-        }
-        std::cout << "\n";
-        for (int j = 0; j < y+1; j++) {
-            std::cout << " ";
-        }
-    }
-
-    std::cout << std::endl;
-
-    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles_2 = solve_residual_error<LATTICE_SIZE>(residual_error, REGION_SIZE);
-
-    for (int y = 0; y < LATTICE_SIZE; y++) {
-        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
-            std::cout << triangle_toggles_2[y][x] << " ";
-        }
-        std::cout << "\n";
-        for (int j = 0; j < y+1; j++) {
-            std::cout << " ";
-        }
-    }
-
-    std::cout << std::endl;
-
-    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> remaining_error = apply_triangles<LATTICE_SIZE>(residual_error, triangle_toggles_2);
-
-    for (int y = 0; y < LATTICE_SIZE + 1; y++) {
-        for (int x = 0; x < LATTICE_SIZE + 1; x++) {
-            std::cout << remaining_error[y][x] << " ";
-        }
-        std::cout << "\n";
-        for (int j = 0; j < y+1; j++) {
-            std::cout << " ";
-        }
-    }
-
-    std::cout << std::endl;
-
-    for (int y = 0; y < LATTICE_SIZE; y++) {
-        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
-            std::cout << (triangle_toggles[y][x] ^ triangle_toggles_2[y][x]) << " ";
-        }
-        std::cout << "\n";
-        for (int j = 0; j < y+1; j++) {
-            std::cout << " ";
-        }
-    }
-
-    return 0;
 }
