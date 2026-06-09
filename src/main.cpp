@@ -11,7 +11,7 @@
 using namespace operations_research::sat;
 
 #include "../include/Graph.h"
-#include "../include/LatticeGraph.h"
+#include "../include/lattice_graph.h"
 
 #include <string>
 #include "google/protobuf/text_format.h"
@@ -205,6 +205,29 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_lattice(std::a
     return triangle_toggles;
 }
 
+template<int LATTICE_SIZE>
+std::pair<std::vector<int_pair>, int> process_spanning_tree(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const std::shared_ptr<lattice_spanning_tree>& spanning_tree) {
+    int current_error = sample_error[spanning_tree->root.second][spanning_tree->root.first];
+    std::vector<int_pair> flips{};
+    for (std::pair<const int_pair, tuple<std::shared_ptr<lattice_spanning_tree>, int_pair, int_pair> > child: spanning_tree->children) {
+        int_pair target = child.first;
+        std::shared_ptr<lattice_spanning_tree> next_tree = std::get<0>(child.second);
+        int_pair tri1 = std::get<1>(child.second);
+        int_pair tri2 = std::get<2>(child.second);
+
+        auto result = process_spanning_tree<LATTICE_SIZE>(sample_error, next_tree);
+        for (auto pair : result.first) {
+            flips.push_back(pair);
+        }
+        if (result.second != 0) {
+            flips.push_back(tri1);
+            flips.push_back(tri2);
+            current_error = current_error ^ result.second;
+        }
+    }
+    return {flips, current_error};
+}
+
 template <int LATTICE_SIZE>
 std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> apply_triangles(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_choices) {
     std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> result{};
@@ -240,9 +263,83 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
         }
     }
 
-    LatticeGraph red_graph;
-    LatticeGraph green_graph;
-    LatticeGraph blue_graph;
+    int_pair centroid{LATTICE_SIZE, LATTICE_SIZE / 2};
+    int_pair best_tri = {std::numeric_limits<int>::max()/2, std::numeric_limits<int>::max()/2};
+
+    for (int x = REGION_SIZE * 2; x < LATTICE_SIZE * 2; x += (REGION_SIZE + 1) * 2) {
+        for (int y = 0; y < LATTICE_SIZE; y++) {
+            if (int_pair::is_left_closer(centroid, {x, y}, best_tri)) {
+                best_tri = {x, y};
+            }
+            if (int_pair::is_left_closer(centroid, {x + 1, y}, best_tri)) {
+                best_tri = {x + 1, y};
+            }
+        }
+    }
+
+    for (int y = REGION_SIZE; y < LATTICE_SIZE; y += REGION_SIZE + 1) {
+        for (int x = 0; x < LATTICE_SIZE; x++) {
+            if (int_pair::is_left_closer(centroid, {x, y}, best_tri)) {
+                best_tri = {x, y};
+            }
+        }
+    }
+
+    int_pair best_red{0, 0};
+    int_pair best_green{0, 0};
+    int_pair best_blue{0, 0};
+
+    int first = best_tri.first;
+    int second = best_tri.second;
+    if (first % 2 == 0) {
+        int_pair top_left = {first/2, second};
+        int_pair bottom = {first/2, second+1};
+        int_pair top_right = {first/2+1, second};
+
+        int color = (second * 2 + (first / 2)) % 3;
+        if (color == 0) {
+            best_red = top_left;
+            best_green = top_right;
+            best_blue = bottom;
+        } else if (color == 1) {
+            best_red = bottom;
+            best_green = top_left;
+            best_blue = top_right;
+        } else if (color == 2) {
+            best_red = top_right;
+            best_green = bottom;
+            best_blue = top_left;
+        }
+    } else {
+        int_pair top = {first/2 + 1, second};
+        int_pair bottom_left = {first/2, second + 1};
+        int_pair bottom_right = {first/2 + 1, second + 1};
+
+        int color = (second * 2 + (first / 2)) % 3;
+        //std::cout << color << std::endl;
+        if (color == 0) {
+            best_red = bottom_right;
+            best_green = top;
+            best_blue = bottom_left;
+        } else if (color == 1) {
+            best_red = bottom_left;
+            best_green = bottom_right;
+            best_blue = top;
+        } else if (color == 2) {
+            best_red = top;
+            best_green = bottom_left;
+            best_blue = bottom_right;
+        }
+    }
+
+    //std::cout << best_tri.first << " " << best_tri.second << std::endl;
+    //std::cout << best_red.first << " " << best_red.second << std::endl;
+    //std::cout << best_green.first << " " << best_green.second << std::endl;
+    //std::cout << best_blue.first << " " << best_blue.second << std::endl;
+
+    lattice_graph red_graph;
+    lattice_graph green_graph;
+    lattice_graph blue_graph;
 
     // Down-right direction
     for (int x = REGION_SIZE; x < LATTICE_SIZE + 1; x += REGION_SIZE + 1) {
@@ -252,11 +349,11 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
             if (opposing_x < 0 || opposing_x >= LATTICE_SIZE + 1 || opposing_y < 0 || opposing_y >= LATTICE_SIZE + 1) continue;
             int color = (y * 2 + x) % 3;
             if (color == 0) {
-                red_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
+                red_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
             } else if (color == 1) {
-                green_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
+                green_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
             } else if (color == 2) {
-                blue_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
+                blue_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
             }
         }
     }
@@ -269,11 +366,11 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
             if (opposing_x < 0 || opposing_x >= LATTICE_SIZE + 1 || opposing_y < 0 || opposing_y >= LATTICE_SIZE + 1) continue;
             int color = (y * 2 + x) % 3;
             if (color == 0) {
-                red_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x) - 1, y}, {(2 * x) - 2, y + 1});
+                red_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x) - 1, y}, {(2 * x) - 2, y + 1});
             } else if (color == 1) {
-                green_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x) - 1, y}, {(2 * x) - 2, y + 1});
+                green_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x) - 1, y}, {(2 * x) - 2, y + 1});
             } else if (color == 2) {
-                blue_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x) - 1, y}, {(2 * x) - 2, y + 1});
+                blue_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x) - 1, y}, {(2 * x) - 2, y + 1});
             }
         }
     }
@@ -286,11 +383,11 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
             if (opposing_x < 0 || opposing_x >= LATTICE_SIZE + 1 || opposing_y < 0 || opposing_y >= LATTICE_SIZE + 1) continue;
             int color = (y * 2 + x) % 3;
             if (color == 0) {
-                red_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
+                red_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
             } else if (color == 1) {
-                green_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
+                green_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
             } else if (color == 2) {
-                blue_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
+                blue_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x), y}, {(2 * x) + 1, y});
             }
         }
     }
@@ -303,16 +400,36 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
             if (opposing_x < 0 || opposing_x >= LATTICE_SIZE + 1 || opposing_y < 0 || opposing_y >= LATTICE_SIZE + 1) continue;
             int color = (y * 2 + x) % 3;
             if (color == 0) {
-                red_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x) + 1, y - 1}, {(2 * x) + 2, y - 1});
+                red_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x) + 1, y - 1}, {(2 * x) + 2, y - 1});
             } else if (color == 1) {
-                green_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x) + 1, y - 1}, {(2 * x) + 2, y - 1});
+                green_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x) + 1, y - 1}, {(2 * x) + 2, y - 1});
             } else if (color == 2) {
-                blue_graph.addEdge({x, y}, {opposing_x, opposing_y}, {(2 * x) + 1, y - 1}, {(2 * x) + 2, y - 1});
+                blue_graph.add_edge({x, y}, {opposing_x, opposing_y}, {(2 * x) + 1, y - 1}, {(2 * x) + 2, y - 1});
             }
         }
     }
 
-    blue_graph.toSpanningTree({2, 3})->printSpanningTreeDepthFirst();
+    std::shared_ptr<lattice_spanning_tree> red_spanning_tree = red_graph.to_spanning_tree(best_red);
+    std::shared_ptr<lattice_spanning_tree> green_spanning_tree = green_graph.to_spanning_tree(best_green);
+    std::shared_ptr<lattice_spanning_tree> blue_spanning_tree = blue_graph.to_spanning_tree(best_blue);
+
+    std::pair<std::vector<int_pair>, int> red_result = process_spanning_tree<LATTICE_SIZE>(residual_error, red_spanning_tree);
+    std::pair<std::vector<int_pair>, int> green_result = process_spanning_tree<LATTICE_SIZE>(residual_error, green_spanning_tree);
+    std::pair<std::vector<int_pair>, int> blue_result = process_spanning_tree<LATTICE_SIZE>(residual_error, blue_spanning_tree);
+
+    for (auto flip : red_result.first) {
+        triangle_toggles[flip.second][flip.first] ^= 1;
+    }
+    for (auto flip : green_result.first) {
+        triangle_toggles[flip.second][flip.first] ^= 1;
+    }
+    for (auto flip : blue_result.first) {
+        triangle_toggles[flip.second][flip.first] ^= 1;
+    }
+
+    if (red_result.second == 1) {
+        triangle_toggles[best_tri.second][best_tri.first] ^= 1;
+    }
 
     return triangle_toggles;
 }
@@ -320,17 +437,21 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
 int main() {
     absl::InitializeLog();
     absl::SetStderrThreshold(absl::LogSeverity::kInfo);
-    std::mt19937 gen(35);
+    std::mt19937 gen(52);
 
-    constexpr int LATTICE_SIZE = 5;
+    constexpr int LATTICE_SIZE = 7;
     std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = {{
-        {0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 1, 1, 0},
+        {0, 0, 0, 0, 0, 1, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 1, 0, 0, 0, 1, 0},
+        {0, 1, 1, 0, 0, 1, 1, 0},
+        {0, 1, 1, 0, 0, 0, 0, 0},
+        {0, 1, 0, 0, 0, 0, 0, 0},
     }};
-    constexpr int REGION_SIZE = 2;
+    //std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = make_random_error<LATTICE_SIZE>(gen, 0.1);
+    constexpr int REGION_SIZE = 1;
 
     for (int y = 0; y < LATTICE_SIZE + 1; y++) {
         for (int x = 0; x < LATTICE_SIZE + 1; x++) {
@@ -373,6 +494,42 @@ int main() {
     std::cout << std::endl;
 
     std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles_2 = solve_residual_error<LATTICE_SIZE>(residual_error, REGION_SIZE);
+
+    for (int y = 0; y < LATTICE_SIZE; y++) {
+        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+            std::cout << triangle_toggles_2[y][x] << " ";
+        }
+        std::cout << "\n";
+        for (int j = 0; j < y+1; j++) {
+            std::cout << " ";
+        }
+    }
+
+    std::cout << std::endl;
+
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> remaining_error = apply_triangles<LATTICE_SIZE>(residual_error, triangle_toggles_2);
+
+    for (int y = 0; y < LATTICE_SIZE + 1; y++) {
+        for (int x = 0; x < LATTICE_SIZE + 1; x++) {
+            std::cout << remaining_error[y][x] << " ";
+        }
+        std::cout << "\n";
+        for (int j = 0; j < y+1; j++) {
+            std::cout << " ";
+        }
+    }
+
+    std::cout << std::endl;
+
+    for (int y = 0; y < LATTICE_SIZE; y++) {
+        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+            std::cout << (triangle_toggles[y][x] ^ triangle_toggles_2[y][x]) << " ";
+        }
+        std::cout << "\n";
+        for (int j = 0; j < y+1; j++) {
+            std::cout << " ";
+        }
+    }
 
     return 0;
 }
