@@ -21,4 +21,4 @@ add_executable(ilpfun src/main.cpp)
 
 target_include_directories(ilpfun PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(ilpfun PRIVATE ortools::ortools)
-target_compile_options(ilpfun PRIVATE -Wall -Wextra -O0 -g)
+target_compile_options(ilpfun PRIVATE -O3)

@@ -112,6 +112,39 @@ std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> make_random_erro
     return result;
 }
 
+std::array<int_pair, 3> get_adj_points_from_tri(int_pair tri) {
+    int x = tri.first;
+    int y = tri.second;
+    if (x % 2 == 0) {
+        return std::array<int_pair, 3>{
+            {
+                {x/2, y},
+                {x/2, y+1},
+                {x/2+1, y}
+            }};
+    } else {
+        return std::array<int_pair, 3>{
+            {
+                {x/2+1, y},
+                {x/2, y+1},
+                {x/2+1, y+1}
+            }};
+    }
+}
+
+std::array<int_pair, 6> get_adj_tris_from_point(const int_pair point) {
+    int x = point.first;
+    int y = point.second;
+    return std::array<int_pair, 6>{{
+        {(2 * x) - 1, y - 1},
+        {(2 * x), y - 1},
+        {(2 * x) + 1, y - 1},
+        {(2 * x) - 2, y},
+        {(2 * x) - 1, y},
+        {(2 * x), y},
+    }};
+}
+
 template<int LATTICE_SIZE>
 std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_lattice(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const int REGION_SIZE, bool is_border_boundary = true) {
     std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles{};
@@ -197,6 +230,120 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_lattice(std::a
                 for (int y = region_y; y < LATTICE_SIZE && y <= region_y + REGION_SIZE; y++) {
                     int answer = SolutionIntegerValue(response, tri_vars[x][y]);
                     triangle_toggles[y][x] = answer;
+                }
+            }
+        }
+    }
+
+    return triangle_toggles;
+}
+
+template<int LATTICE_SIZE>
+bool check_boundary_point(int_pair point, int region_x, int region_y, int REGION_SIZE, bool is_border_boundary = true) {
+    if (region_x > 0 && region_y == 0) {
+        int dummy = 42;
+    }
+
+    int x = point.first;
+    int y = point.second;
+    bool is_boundary_point = false;
+    if (is_border_boundary) {
+        is_boundary_point |= x == region_x;
+        is_boundary_point |= x == region_x + REGION_SIZE;
+        is_boundary_point |= y == region_y;
+        is_boundary_point |= y == region_y + REGION_SIZE;
+    } else {
+        is_boundary_point |= x == region_x && x != 0;
+        is_boundary_point |= x == region_x + REGION_SIZE && x != LATTICE_SIZE;
+        is_boundary_point |= y == region_y && y != 0;
+        is_boundary_point |= y == region_y + REGION_SIZE && y != LATTICE_SIZE;
+    }
+    return is_boundary_point;
+}
+
+template<int LATTICE_SIZE>
+std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_lattice_dp(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const int REGION_SIZE, bool is_border_boundary = true) {
+    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles{};
+    for (int y = 0; y < LATTICE_SIZE; y++) {
+        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+            triangle_toggles[y][x] = 0;
+        }
+    }
+
+    int region_increment = REGION_SIZE + 1;
+
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sec{};
+    for (int y = 0; y < LATTICE_SIZE + 1; y++) {
+        for (int x = 0; x < LATTICE_SIZE + 1; x++) {
+            sec[y][x] = sample_error[y][x];
+        }
+    }
+
+    for (int region_x = 0; region_x < LATTICE_SIZE + 1; region_x += region_increment) {
+        for (int region_y = 0; region_y < LATTICE_SIZE + 1; region_y += region_increment) {
+            std::unordered_set<int_pair> processed_triangles{};
+            for (int x = region_x; x < LATTICE_SIZE + 1 && x < region_x + REGION_SIZE; x++) {
+                std::unordered_set<int_pair> tris{};
+                std::unordered_map<int_pair, int> parities{};
+                for (int y = region_y; y < region_y + REGION_SIZE + 1 && y < LATTICE_SIZE + 1; y++) {
+                    if (!check_boundary_point<LATTICE_SIZE>({x, y}, region_x, region_y, REGION_SIZE, is_border_boundary)) {
+                        parities[{x, y}] = sec[y][x];
+                        auto adj_tris = get_adj_tris_from_point({x, y});
+                        for (auto neighbor_tri : adj_tris) {
+                            if (processed_triangles.contains(neighbor_tri)) continue;
+                            int tx = neighbor_tri.first;
+                            int ty = neighbor_tri.second;
+                            if (tx >= 0 && tx < LATTICE_SIZE * 2 && ty >= 0 && ty < LATTICE_SIZE) {
+                                tris.insert(neighbor_tri);
+                            }
+                        }
+                    }
+                }
+
+                bool success = false;
+                for (int m = 0; m < tris.size(); m++) {
+                    std::vector<bool> bools(tris.size(), false);
+                    for (int i = 0; i < m; i++) {
+                        bools[i] = true;
+                    }
+                    do {
+                        auto new_parities(parities);
+                        std::unordered_set<int_pair> flipped_triangles{};
+                        int i = 0;
+                        for (auto tri : tris) {
+                            if (bools[i]) {
+                                flipped_triangles.insert(tri);
+                                auto adj_points = get_adj_points_from_tri(tri);
+                                for (auto neighbor : adj_points) {
+                                    if (new_parities.contains(neighbor)) {
+                                        new_parities[neighbor] ^= 1;
+                                    }
+                                }
+                            }
+                            i++;
+                        }
+                        success = true;
+                        for (auto v : new_parities | std::views::values) {
+                            if (v != 0) {
+                                success = false;
+                                break;
+                            }
+                        }
+                        if (success) {
+                            for (auto tri : flipped_triangles) {
+                                triangle_toggles[tri.second][tri.first] ^= 1;
+                                for (auto point : get_adj_points_from_tri(tri)) {
+                                    sec[point.second][point.first] ^= 1;
+                                }
+                            }
+                            for (auto tri : tris) {
+                                processed_triangles.insert(tri);
+                            }
+                        }
+                    } while (std::ranges::prev_permutation(bools).found && success == false);
+                    if (success) {
+                        break;
+                    }
                 }
             }
         }
@@ -436,9 +583,9 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
 
 template <int LATTICE_SIZE>
 std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> test_sample(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const int REGION_SIZE) {
-    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles = solve_lattice<LATTICE_SIZE>(sample_error, REGION_SIZE, false);
+    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles = solve_lattice_dp<LATTICE_SIZE>(sample_error, REGION_SIZE, true);
     std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> residual_error = apply_triangles<LATTICE_SIZE>(sample_error, triangle_toggles);
-    if (REGION_SIZE > LATTICE_SIZE) {
+    if (REGION_SIZE < LATTICE_SIZE) {
         std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles_2 = solve_residual_error<LATTICE_SIZE>(residual_error, REGION_SIZE);
         std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> remaining_error = apply_triangles<LATTICE_SIZE>(residual_error, triangle_toggles_2);
         for (int y = 0; y < LATTICE_SIZE; y++) {
@@ -464,7 +611,7 @@ int main() {
     absl::InitializeLog();
     absl::SetStderrThreshold(absl::LogSeverity::kInfo);
     std::mt19937 gen(52);
-    std::freopen("performance.csv", "w", stdout);
+    std::freopen("performance_dp.csv", "w", stdout);
 
     std::cout << "REGION_SIZE,LATTICE_SIZE,p/100,Elapsed Time (ms)" << "\n";
 
@@ -484,4 +631,30 @@ int main() {
             }
         }
     }
+    /*
+    constexpr int LATTICE_SIZE = 7;
+    constexpr int REGION_SIZE = 3;
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = {
+        {
+            {0, 0, 0, 0, 0, 0, 1, 1},
+            {1, 1, 0, 0, 0, 0, 1, 1},
+            {1, 0, 0, 0, 1, 0, 0, 1},
+            {0, 1, 0, 1, 1, 0, 1, 0},
+            {1, 0, 1, 0, 1, 0, 1, 0},
+            {1, 0, 0, 0, 0, 1, 0, 1},
+            {1, 0, 0, 0, 0, 0, 1, 1},
+            {0, 0, 0, 0, 0, 0, 0, 0},
+        }};
+    auto result = test_sample<LATTICE_SIZE>(sample_error, REGION_SIZE);
+
+    for (int y = 0; y < LATTICE_SIZE; y++) {
+        for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+            std::cout << result[y][x] << " ";
+        }
+        std::cout << std::endl;
+        for (int i = 0; i < y + 1; i++) {
+            std::cout << " ";
+        }
+    }
+    */
 }
