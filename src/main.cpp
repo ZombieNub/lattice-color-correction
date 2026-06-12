@@ -583,6 +583,22 @@ std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> solve_residual_error
 
 template <int LATTICE_SIZE>
 std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> test_sample(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const int REGION_SIZE) {
+    std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles = solve_lattice<LATTICE_SIZE>(sample_error, REGION_SIZE, true);
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> residual_error = apply_triangles<LATTICE_SIZE>(sample_error, triangle_toggles);
+    if (REGION_SIZE < LATTICE_SIZE) {
+        std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles_2 = solve_residual_error<LATTICE_SIZE>(residual_error, REGION_SIZE);
+        std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> remaining_error = apply_triangles<LATTICE_SIZE>(residual_error, triangle_toggles_2);
+        for (int y = 0; y < LATTICE_SIZE; y++) {
+            for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+                triangle_toggles[y][x] = triangle_toggles[y][x] ^ triangle_toggles_2[y][x];
+            }
+        }
+    }
+    return triangle_toggles;
+}
+
+template <int LATTICE_SIZE>
+std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> test_sample_dp(std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error, const int REGION_SIZE) {
     std::array<std::array<int, LATTICE_SIZE * 2>, LATTICE_SIZE> triangle_toggles = solve_lattice_dp<LATTICE_SIZE>(sample_error, REGION_SIZE, true);
     std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> residual_error = apply_triangles<LATTICE_SIZE>(sample_error, triangle_toggles);
     if (REGION_SIZE < LATTICE_SIZE) {
@@ -611,41 +627,44 @@ int main() {
     absl::InitializeLog();
     absl::SetStderrThreshold(absl::LogSeverity::kInfo);
     std::mt19937 gen(52);
-    std::freopen("performance_dp.csv", "w", stdout);
+    // std::freopen("approximation_dp.csv", "w", stdout);
+    //
+    // //std::cout << "REGION_SIZE,LATTICE_SIZE,p/100,Elapsed Time (ms)" << "\n";
+    // std::cout << "REGION_SIZE,LATTICE_SIZE,p/100,Approximation,Optimal,Ratio" << "\n";
+    //
+    // template for (constexpr int REGION_SIZE : std::views::iota(2, 8)) {
+    //     template for (constexpr int LATTICE_SIZE : std::views::iota(REGION_SIZE, 26)) {
+    //         for (int p = 0; p <= 100; p += 20) {
+    //             double np = static_cast<double>(p) / static_cast<double>(100);
+    //             auto sample_error = make_random_error<LATTICE_SIZE>(gen, np);
+    //             //auto start = std::chrono::steady_clock::now();
+    //             auto approx = test_sample_dp<LATTICE_SIZE>(sample_error, REGION_SIZE);
+    //             auto optimal = test_sample<LATTICE_SIZE>(sample_error, LATTICE_SIZE);
+    //             int approx_count = 0;
+    //             int optimal_count = 0;
+    //             for (int y = 0; y < LATTICE_SIZE; y++) {
+    //                 for (int x = 0; x < LATTICE_SIZE * 2; x++) {
+    //                     approx_count += approx[y][x];
+    //                     optimal_count += optimal[y][x];
+    //                 }
+    //             }
+    //             //auto end = std::chrono::steady_clock::now();
+    //             //auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    //             std::cout << REGION_SIZE << ",";
+    //             std::cout << LATTICE_SIZE << ",";
+    //             std::cout << p << ",";
+    //             std::cout << approx_count << ",";
+    //             std::cout << optimal_count << ",";
+    //             std::cout << static_cast<double>(approx_count) / static_cast<double>(optimal_count) << "\n";
+    //             //std::cout << elapsed.count() << "\n";
+    //         }
+    //     }
+    // }
 
-    std::cout << "REGION_SIZE,LATTICE_SIZE,p/100,Elapsed Time (ms)" << "\n";
-
-    template for (constexpr int REGION_SIZE : std::views::iota(2, 6)) {
-        template for (constexpr int LATTICE_SIZE : std::views::iota(REGION_SIZE, 101)) {
-            for (int p = 0; p <= 100; p += 10) {
-                double np = static_cast<double>(p) / static_cast<double>(100);
-                auto sample_error = make_random_error<LATTICE_SIZE>(gen, np);
-                auto start = std::chrono::steady_clock::now();
-                auto result = test_sample<LATTICE_SIZE>(sample_error, REGION_SIZE);
-                auto end = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-                std::cout << REGION_SIZE << ",";
-                std::cout << LATTICE_SIZE << ",";
-                std::cout << p << ",";
-                std::cout << elapsed.count() << "\n";
-            }
-        }
-    }
-    /*
-    constexpr int LATTICE_SIZE = 7;
-    constexpr int REGION_SIZE = 3;
-    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = {
-        {
-            {0, 0, 0, 0, 0, 0, 1, 1},
-            {1, 1, 0, 0, 0, 0, 1, 1},
-            {1, 0, 0, 0, 1, 0, 0, 1},
-            {0, 1, 0, 1, 1, 0, 1, 0},
-            {1, 0, 1, 0, 1, 0, 1, 0},
-            {1, 0, 0, 0, 0, 1, 0, 1},
-            {1, 0, 0, 0, 0, 0, 1, 1},
-            {0, 0, 0, 0, 0, 0, 0, 0},
-        }};
-    auto result = test_sample<LATTICE_SIZE>(sample_error, REGION_SIZE);
+    constexpr int LATTICE_SIZE = 52;
+    constexpr int REGION_SIZE = 20;
+    std::array<std::array<int, LATTICE_SIZE + 1>, LATTICE_SIZE + 1> sample_error = make_random_error<LATTICE_SIZE>(gen, 0.4);
+    auto result = test_sample_dp<LATTICE_SIZE>(sample_error, REGION_SIZE);
 
     for (int y = 0; y < LATTICE_SIZE; y++) {
         for (int x = 0; x < LATTICE_SIZE * 2; x++) {
@@ -656,5 +675,5 @@ int main() {
             std::cout << " ";
         }
     }
-    */
+
 }
